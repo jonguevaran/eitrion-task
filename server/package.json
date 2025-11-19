@@ -1,0 +1,19 @@
+{
+  "name": "eitrion-task-server",
+  "version": "1.0.0",
+  "description": "Backend local para Eitrion Task con SQLite",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": [],
+  "author": "Ender Narea",
+  "license": "ISC",
+  "dependencies": {
+    "body-parser": "^1.20.3",
+    "cors": "^2.8.5",
+    "express": "^4.21.1",
+    "sqlite3": "^5.1.7"
+  }
+}
