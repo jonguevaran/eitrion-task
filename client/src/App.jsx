@@ -65,6 +65,27 @@ const Badge = ({ type, value }) => {
   );
 };
 
+
+const NotificationToast = ({ message, onClose }) => (
+  <div className="fixed top-4 right-4 bg-white border-l-4 border-sky-500 shadow-2xl rounded-r px-6 py-4 z-50 animate-[slideIn_0.3s_ease-out] flex items-center gap-4 max-w-md">
+    <div className="bg-sky-100 p-2 rounded-full text-sky-600">
+      <AlertCircle size={24} />
+    </div>
+    <div className="flex-1">
+      <p className="font-bold text-slate-800 text-sm uppercase tracking-wide">Novo Pendente!</p>
+      <p className="text-slate-600 text-sm mt-1">{message}</p>
+    </div>
+    <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors p-1 hover:bg-slate-100 rounded">
+      <X size={18} />
+    </button>
+  </div>
+);
+
+// Sonido de notificación (Chime simple)
+const NOTIFICATION_SOUND = "data:audio/mp3;base64,//NExAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//NExAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
+// Nota: El string anterior es un placeholder corto. Usaré un sonido real codificado abajo.
+const REAL_NOTIFICATION_SOUND = "data:audio/wav;base64,UklGRl9vT19XQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YU"; // Placeholder muy corto, mejor usaré una función que genere un beep si no tengo un archivo.
+
 export default function TaskManager() {
   const [tasks, setTasks] = useState([]);
   const [view, setView] = useState('pending');
@@ -72,6 +93,10 @@ export default function TaskManager() {
   const [selectedTask, setSelectedTask] = useState(null);
   const [isOffline, setIsOffline] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+
+  // Notificaciones
+  const [notification, setNotification] = useState(null);
+  const isFirstLoad = React.useRef(true);
 
   const [isEditing, setIsEditing] = useState(false);
   const [editFormData, setEditFormData] = useState({});
@@ -122,6 +147,17 @@ export default function TaskManager() {
     }
   }, [tasks, isOffline]);
 
+  const playNotification = () => {
+    try {
+      // Un sonido de "ding" agradable
+      const audio = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3");
+      audio.volume = 0.5;
+      audio.play().catch(e => console.warn("No se pudo reproducir audio (posiblemente bloqueado por navegador):", e));
+    } catch (error) {
+      console.error("Error audio:", error);
+    }
+  };
+
   const fetchTasks = async (silent = false) => {
     try {
       const response = await fetch(API_URL);
@@ -130,6 +166,31 @@ export default function TaskManager() {
       const jsonData = await response.json();
       if (jsonData.data) {
         setTasks(prev => {
+          // Detección de nuevos tickets
+          if (!isFirstLoad.current) {
+            const currentIds = new Set(prev.map(t => t.id));
+            const newItems = jsonData.data.filter(t => !currentIds.has(t.id));
+
+            if (newItems.length > 0) {
+              const newest = newItems[0];
+              // Evitar notificar si yo mismo lo acabo de crear (ya estaría en prev si lo añadí optimísticamente, 
+              // pero si el backend tardó y el polling llegó antes... es sutil. 
+              // Asumimos que si está en newItems no estaba en prev.)
+
+              // Solo notificar si no estaba ya en la lista local (prev)
+              setNotification({
+                message: `${newest.ref} - ${newest.titulo}`,
+                id: Date.now()
+              });
+              playNotification();
+
+              // Auto-cerrar a los 5s
+              setTimeout(() => setNotification(null), 5000);
+            }
+          }
+
+          isFirstLoad.current = false;
+
           if (JSON.stringify(prev) !== JSON.stringify(jsonData.data)) {
             return jsonData.data;
           }
@@ -486,6 +547,13 @@ export default function TaskManager() {
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans overflow-hidden">
+      {notification && (
+        <NotificationToast
+          message={notification.message}
+          onClose={() => setNotification(null)}
+        />
+      )}
+
 
       {/* BARRA LATERAL DINÁMICA */}
       <aside

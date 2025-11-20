@@ -1,6 +1,6 @@
 @echo off
 :: Navega al directorio donde está este archivo .bat
-cd /d "%~dp0"
+cd /d "C:\eitrion-task-main"
 
 :: Ejecuta el script de inicio
 npm run start

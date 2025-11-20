@@ -32,3 +32,14 @@
   background-color: rgba(156, 163, 175, 0.5);
   border-radius: 20px;
 }
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
