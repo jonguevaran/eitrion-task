@@ -466,7 +466,7 @@ export default function TaskManager() {
       id: Date.now().toString(),
       createdAt: new Date().toISOString(),
       ref: formData.ref || `REF-${Math.floor(Math.random() * 10000)}`,
-      solicitadoPor: user?.name || formData.solicitadoPor,
+      solicitadoPor: user?.name || formData.solicitadoPor || 'endernarea',
       prioridad: formData.prioridad,
       estado: formData.estado,
       titulo: formData.titulo,
@@ -635,7 +635,7 @@ export default function TaskManager() {
       ...selectedTask,
       comentariosHistorial: [
         ...selectedTask.comentariosHistorial,
-        { text: newComment, date: new Date().toISOString(), author: user?.name || 'Utilizador' }
+        { text: newComment, date: new Date().toISOString(), author: user?.name || 'endernarea' }
       ]
     };
     updateTaskInBackend(updated);
@@ -1190,6 +1190,7 @@ export default function TaskManager() {
                     ) : selectedTask.ref}
                   </h3>
                   <p className="text-sm text-slate-500 mt-1">{new Date(selectedTask.createdAt).toLocaleString()}</p>
+                  <p className="text-sm text-slate-600 font-medium mt-1">Autor: {selectedTask.solicitadoPor}</p>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
                   {isEditing ? (
@@ -1247,13 +1248,13 @@ export default function TaskManager() {
                     <label className="text-xs uppercase text-slate-400 font-bold block">Solicitado Por</label>
                     {isEditing ? (
                       <input className="w-full p-2 border border-slate-300 rounded" value={editFormData.solicitadoPor} onChange={(e) => setEditFormData({ ...editFormData, solicitadoPor: e.target.value })} />
-                    ) : <p className="text-slate-800 font-medium text-lg">{selectedTask.solicitadoPor}</p>}
+                    ) : <p className="text-slate-700">{selectedTask.solicitadoPor}</p>}
                   </div>
                   <div>
                     <label className="text-xs uppercase text-slate-400 font-bold block">Título</label>
                     {isEditing ? (
                       <input className="w-full p-2 border border-slate-300 rounded" value={editFormData.titulo} onChange={(e) => setEditFormData({ ...editFormData, titulo: e.target.value })} />
-                    ) : <p className="text-slate-700">{selectedTask.titulo}</p>}
+                    ) : <p className="text-2xl font-bold text-slate-800">{selectedTask.titulo}</p>}
                   </div>
                   <div>
                     <label className="text-xs uppercase text-slate-400 font-bold block">Descrição Inicial</label>
