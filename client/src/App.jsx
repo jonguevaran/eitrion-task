@@ -15,8 +15,7 @@ import {
   AlertCircle,
   MessageSquare,
   Tag,
-  Users,
-  Layers,
+  Database,
   Wifi,
   WifiOff,
   Pencil,
@@ -25,7 +24,13 @@ import {
   Trash2,
   ChevronLeft,
   ChevronRight,
-  RefreshCw
+  RefreshCw,
+  Volume2,
+  User,
+  Users,
+  Lock,
+  LogOut,
+  Shield
 } from 'lucide-react';
 
 const API_URL = `http://${window.location.hostname}:3001/api/tasks`;
@@ -94,9 +99,120 @@ export default function TaskManager() {
   const [isOffline, setIsOffline] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
+  // AUTH STATE
+  const [user, setUser] = useState(null);
+  const [authView, setAuthView] = useState('login'); // 'login' | 'register'
+  const [authData, setAuthData] = useState({ username: '', password: '', name: '' });
+  const [authError, setAuthError] = useState('');
+  const [hasUsers, setHasUsers] = useState(true); // Assume true initially
+  const [usersList, setUsersList] = useState([]); // For Admin view
+  const [newUser, setNewUser] = useState({ name: '', username: '', password: '', role: 'Editor' });
+
+  useEffect(() => {
+    const savedUser = localStorage.getItem('eitrion_user');
+    if (savedUser) {
+      try {
+        setUser(JSON.parse(savedUser));
+      } catch (e) {
+        console.error("Error parsing user from local storage", e);
+        localStorage.removeItem('eitrion_user');
+      }
+    }
+    checkSystemUsers();
+  }, []);
+
+  const checkSystemUsers = async () => {
+    try {
+      const res = await fetch(`${API_URL.replace('/tasks', '/users')}`);
+      const data = await res.json();
+      if (data.data && data.data.length === 0) {
+        setHasUsers(false);
+      } else {
+        setHasUsers(true);
+        if (user?.role === 'Admin') {
+          setUsersList(data.data);
+        }
+      }
+    } catch (err) {
+      console.error("Error checking users:", err);
+    }
+  };
+
+  // Refresh users list when view changes to 'users'
+  useEffect(() => {
+    if (view === 'users' && user?.role === 'Admin') {
+      checkSystemUsers();
+    }
+  }, [view, user]);
+
+  const handleAuth = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+    const endpoint = authView === 'login' ? '/api/login' : '/api/register';
+
+    try {
+      const res = await fetch(`http://${window.location.hostname}:3001${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(authData)
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) throw new Error(data.error || 'Erro de autenticação');
+
+      const userData = { id: data.id, name: data.name, username: data.username, role: data.role };
+      setUser(userData);
+      localStorage.setItem('eitrion_user', JSON.stringify(userData));
+      setAuthData({ username: '', password: '', name: '' });
+      checkSystemUsers(); // Re-check to update UI state
+    } catch (err) {
+      setAuthError(err.message);
+    }
+  };
+
+  const handleCreateUser = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`http://${window.location.hostname}:3001/api/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newUser)
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      alert(`Utilizador ${data.username} criado com sucesso!`);
+      setNewUser({ name: '', username: '', password: '', role: 'Editor' });
+      checkSystemUsers();
+    } catch (err) {
+      alert("Erro ao criar utilizador: " + err.message);
+    }
+  };
+
+  const handleDeleteUser = async (id) => {
+    if (!confirm("Tem a certeza que deseja eliminar este utilizador?")) return;
+    try {
+      const res = await fetch(`http://${window.location.hostname}:3001/api/users/${id}`, {
+        method: 'DELETE'
+      });
+      if (!res.ok) throw new Error("Erro ao eliminar");
+      checkSystemUsers();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleLogout = () => {
+    setUser(null);
+    localStorage.removeItem('eitrion_user');
+    setView('pending');
+  };
+
   // Notificaciones
   const [notification, setNotification] = useState(null);
   const isFirstLoad = React.useRef(true);
+  const audioContextRef = React.useRef(null);
 
   const [isEditing, setIsEditing] = useState(false);
   const [editFormData, setEditFormData] = useState({});
@@ -152,7 +268,17 @@ export default function TaskManager() {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       if (!AudioContext) return;
 
-      const ctx = new AudioContext();
+      if (!audioContextRef.current) {
+        audioContextRef.current = new AudioContext();
+      }
+
+      const ctx = audioContextRef.current;
+
+      // Resume context if suspended (browser policy)
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
+
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
 
@@ -161,28 +287,35 @@ export default function TaskManager() {
 
       const now = ctx.currentTime;
 
+      // Helper para reproducir un beep
+      const playBeep = (startTime, freq, duration) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, startTime);
+
+        // Envolvente para evitar clicks
+        gain.gain.setValueAtTime(0, startTime);
+        gain.gain.linearRampToValueAtTime(0.5, startTime + 0.01);
+        gain.gain.setValueAtTime(0.5, startTime + duration - 0.01);
+        gain.gain.linearRampToValueAtTime(0, startTime + duration);
+
+        osc.start(startTime);
+        osc.stop(startTime + duration);
+      };
+
       if (type === 'new') {
-        // Ding grave para nuevo ticket (aprox 300Hz)
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(300, now);
-        osc.frequency.exponentialRampToValueAtTime(0.01, now + 1);
-
-        gain.gain.setValueAtTime(0.5, now);
-        gain.gain.exponentialRampToValueAtTime(0.01, now + 1);
-
-        osc.start(now);
-        osc.stop(now + 1);
+        // Doble beep grave (Low Double Beep) - 400Hz (aprox G4)
+        playBeep(now, 400, 0.1);
+        playBeep(now + 0.15, 400, 0.1);
       } else {
-        // Ding MÁS grave para seguimiento (aprox 150Hz)
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(150, now);
-        osc.frequency.exponentialRampToValueAtTime(0.01, now + 1);
-
-        gain.gain.setValueAtTime(0.5, now);
-        gain.gain.exponentialRampToValueAtTime(0.01, now + 1);
-
-        osc.start(now);
-        osc.stop(now + 1);
+        // Doble beep MÁS grave para seguimiento - 200Hz
+        playBeep(now, 200, 0.1);
+        playBeep(now + 0.15, 200, 0.1);
       }
     } catch (error) {
       console.error("Error audio:", error);
@@ -333,13 +466,13 @@ export default function TaskManager() {
       id: Date.now().toString(),
       createdAt: new Date().toISOString(),
       ref: formData.ref || `REF-${Math.floor(Math.random() * 10000)}`,
-      solicitadoPor: formData.solicitadoPor,
+      solicitadoPor: user?.name || formData.solicitadoPor,
       prioridad: formData.prioridad,
       estado: formData.estado,
       titulo: formData.titulo,
       tags: formData.tags,
       comentariosHistorial: [
-        { text: formData.comentarios, date: new Date().toISOString(), author: 'Sistema' }
+        { text: formData.comentarios, date: new Date().toISOString(), author: user?.name || 'Sistema' }
       ]
     };
 
@@ -369,6 +502,7 @@ export default function TaskManager() {
     setFormData(initialFormState);
     setTagInput('');
     //alert(isOffline ? "Registo guardado localmente (Offline)" : "Registo guardado no servidor SQLite");
+    // playSound('new'); // REMOVIDO: No sonar para el creador, solo para otros
     setView('pending');
   };
 
@@ -416,7 +550,7 @@ export default function TaskManager() {
     if (newHistory.length > 0) {
       newHistory[0] = { ...newHistory[0], text: editFormData.descripcionInicial };
     } else {
-      newHistory.push({ text: editFormData.descripcionInicial, date: new Date().toISOString(), author: 'Sistema' });
+      newHistory.push({ text: editFormData.descripcionInicial, date: new Date().toISOString(), author: user?.name || 'Sistema' });
     }
 
     const updatedTask = {
@@ -501,7 +635,7 @@ export default function TaskManager() {
       ...selectedTask,
       comentariosHistorial: [
         ...selectedTask.comentariosHistorial,
-        { text: newComment, date: new Date().toISOString(), author: 'Utilizador' }
+        { text: newComment, date: new Date().toISOString(), author: user?.name || 'Utilizador' }
       ]
     };
     updateTaskInBackend(updated);
@@ -579,7 +713,8 @@ export default function TaskManager() {
         (t.ref && t.ref.toLowerCase().includes(lowerTerm)) ||
         (t.solicitadoPor && t.solicitadoPor.toLowerCase().includes(lowerTerm)) ||
         (t.titulo && t.titulo.toLowerCase().includes(lowerTerm)) ||
-        (t.tags && t.tags.some(tag => tag.includes(normalizedSearchTerm)))
+        (t.tags && t.tags.some(tag => tag.includes(normalizedSearchTerm))) ||
+        (t.comentariosHistorial && t.comentariosHistorial.length > 0 && t.comentariosHistorial[0].text && t.comentariosHistorial[0].text.toLowerCase().includes(lowerTerm))
       );
     }
 
@@ -595,6 +730,107 @@ export default function TaskManager() {
 
     return result;
   }, [tasks, view, searchTerm]);
+
+  if (!user) {
+    return (
+      <div className="flex h-screen bg-slate-100 items-center justify-center p-4 font-sans">
+        <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md">
+          <div className="flex justify-center mb-6">
+            <div className="bg-sky-100 p-4 rounded-full">
+              <LayoutDashboard size={40} className="text-sky-600" />
+            </div>
+          </div>
+          <h2 className="text-2xl font-bold text-center text-slate-800 mb-2">
+            {authView === 'login' ? 'Bem-vindo de volta' : 'Criar Conta'}
+          </h2>
+          <p className="text-center text-slate-500 mb-8">
+            {authView === 'login' ? 'Introduza as suas credenciais' : 'Preencha os dados para se registar'}
+          </p>
+
+          {authError && (
+            <div className="mb-4 p-3 bg-red-50 text-red-600 text-sm rounded-lg flex items-center gap-2">
+              <AlertCircle size={16} /> {authError}
+            </div>
+          )}
+
+          <form onSubmit={handleAuth} className="space-y-4">
+            {authView === 'register' && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Nome Completo</label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                  <input
+                    type="text"
+                    required
+                    className="w-full pl-10 p-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-sky-500 outline-none"
+                    placeholder="Ex: João Silva"
+                    value={authData.name}
+                    onChange={e => setAuthData({ ...authData, name: e.target.value })}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Nome de Utilizador</label>
+              <div className="relative">
+                <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input
+                  type="text"
+                  required
+                  className="w-full pl-10 p-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-sky-500 outline-none"
+                  placeholder="usuario.exemplo"
+                  value={authData.username}
+                  onChange={e => setAuthData({ ...authData, username: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Palavra-passe</label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input
+                  type="password"
+                  required
+                  className="w-full pl-10 p-2.5 border border-slate-300 rounded-lg focus:ring-2 focus:ring-sky-500 outline-none"
+                  placeholder="••••••••"
+                  value={authData.password}
+                  onChange={e => setAuthData({ ...authData, password: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <button type="submit" className="w-full bg-slate-900 text-white py-2.5 rounded-lg font-medium hover:bg-slate-800 transition-colors">
+              {authView === 'login' ? 'Entrar' : 'Registar'}
+            </button>
+          </form>
+
+          <div className="mt-6 text-center text-sm text-slate-600">
+            {authView === 'login' ? (
+              <>
+                {!hasUsers && (
+                  <>
+                    Não tem conta?{' '}
+                    <button onClick={() => { setAuthView('register'); setAuthError(''); }} className="text-sky-600 font-bold hover:underline">
+                      Criar conta (Admin)
+                    </button>
+                  </>
+                )}
+              </>
+            ) : (
+              <>
+                Já tem conta?{' '}
+                <button onClick={() => { setAuthView('login'); setAuthError(''); }} className="text-sky-600 font-bold hover:underline">
+                  Entrar
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans overflow-hidden">
@@ -636,15 +872,15 @@ export default function TaskManager() {
 
         <div
           className={`
-            ${isSidebarCollapsed ? 'justify-center px-0' : 'px-6'} 
-            py-2 text-xs font-bold flex items-center gap-2 
-            ${isOffline ? 'bg-orange-500' : 'bg-emerald-600'} 
+            ${isSidebarCollapsed ? 'justify-center px-0' : 'px-6'}
+            py-3 text-xs font-bold flex items-center gap-3
+            bg-slate-800/50 border-b border-slate-800
             transition-all overflow-hidden whitespace-nowrap
           `}
-          title={isOffline ? 'MODO OFFLINE' : 'CONECTADO'}
+          title={isOffline ? 'Offline' : 'Online'}
         >
-          {isOffline ? <WifiOff size={14} /> : <Wifi size={14} />}
-          {!isSidebarCollapsed && <span>{isOffline ? 'MODO OFFLINE' : 'CONECTADO'}</span>}
+          {!isSidebarCollapsed && <span className="text-white tracking-wider">ESTADO</span>}
+          <div className={`w-2.5 h-2.5 rounded-full shadow-[0_0_8px_rgba(0,0,0,0.5)] ${isOffline ? 'bg-red-500 shadow-red-500/50' : 'bg-green-500 shadow-green-500/50'}`}></div>
         </div>
 
         <nav className="flex-1 p-2 space-y-2 overflow-y-auto overflow-x-hidden">
@@ -690,19 +926,35 @@ export default function TaskManager() {
           {!isSidebarCollapsed && <div className="pt-4 pb-2 px-4 text-xs text-slate-500 uppercase font-bold tracking-wider truncate">Sistema</div>}
           {isSidebarCollapsed && <div className="h-4"></div>}
 
-          <button
-            onClick={() => setView('all')}
-            className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'px-4'} py-3 rounded-lg transition-all ${view === 'all' ? 'bg-sky-300 text-slate-900 font-bold' : 'text-slate-300 hover:bg-slate-800'}`}
-            title="Todos os Registos"
-          >
-            <Layers size={20} className="flex-shrink-0" />
-            {!isSidebarCollapsed && <span className="ml-3 truncate">Todos os Registos</span>}
-          </button>
+          <div onClick={() => { setView('all'); setIsSidebarCollapsed(false); }} className={`p-4 flex items-center gap-4 cursor-pointer hover:bg-slate-800 transition-colors ${view === 'all' ? 'bg-slate-800 border-r-4 border-sky-500' : ''}`}>
+            <Database size={20} className={view === 'all' ? 'text-sky-400' : 'text-slate-400'} />
+            {!isSidebarCollapsed && <span className={view === 'all' ? 'text-white font-medium' : 'text-slate-300'}>Todos os Registos</span>}
+          </div>
+
+          {user?.role === 'Admin' && (
+            <div onClick={() => { setView('users'); setIsSidebarCollapsed(false); }} className={`p-4 flex items-center gap-4 cursor-pointer hover:bg-slate-800 transition-colors ${view === 'users' ? 'bg-slate-800 border-r-4 border-sky-500' : ''}`}>
+              <Users size={20} className={view === 'users' ? 'text-sky-400' : 'text-slate-400'} />
+              {!isSidebarCollapsed && <span className={view === 'users' ? 'text-white font-medium' : 'text-slate-300'}>Utilizadores</span>}
+            </div>
+          )}
         </nav>
 
         {!isSidebarCollapsed && (
-          <div className="p-4 text-xs text-slate-500 text-center border-t border-slate-800 truncate">
-            V1.0 Dev: Ender Narea
+          <div className="p-4 text-xs text-slate-500 text-center border-t border-slate-800 truncate flex flex-col gap-2">
+            <div className="flex items-center justify-center gap-2 text-sky-400 mb-1">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              <span className="font-bold">{user.name}</span>
+            </div>
+            <span className="opacity-75 text-[10px] flex items-center justify-center gap-1">
+              {user.role === 'Admin' && <Shield size={10} />} @{user.username}
+            </span>
+
+            <button
+              onClick={handleLogout}
+              className="flex items-center justify-center gap-2 text-red-400 hover:text-red-300 transition-colors mt-2 py-1 px-2 rounded hover:bg-white/5"
+            >
+              <LogOut size={12} /> Sair
+            </button>
           </div>
         )}
       </aside>
@@ -716,6 +968,7 @@ export default function TaskManager() {
             {view === 'third_party' && 'Aguardando Terceiros'}
             {view === 'completed' && 'Histórico de Concluídos'}
             {view === 'all' && 'Todos os Registos'}
+            {view === 'users' && 'Gestão de Utilizadores'}
           </h2>
 
           <div className="flex items-center gap-4">
@@ -729,7 +982,15 @@ export default function TaskManager() {
               </button>
             )}
 
-            {view !== 'new' && (
+            {/* <button
+              onClick={() => playSound('new')}
+              className="flex items-center gap-2 bg-purple-50 text-purple-600 hover:bg-purple-100 px-4 py-2 rounded-lg text-sm font-medium transition-colors border border-purple-200"
+              title="Testar Som"
+            >
+              <Volume2 size={18} /> <span className="hidden sm:inline">Testar Som</span>
+            </button> */}
+
+            {view !== 'new' && view !== 'users' && (
               <div className="relative w-60 sm:w-80 transition-all">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400" size={18} />
                 <input
@@ -802,6 +1063,65 @@ export default function TaskManager() {
                 </form>
               </Card>
             </div>
+          ) : view === 'users' && user?.role === 'Admin' ? (
+            <div className="max-w-4xl mx-auto space-y-8">
+              <Card className="p-6">
+                <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2"><Users size={20} /> Adicionar Utilizador</h3>
+                <form onSubmit={handleCreateUser} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+                  <div className="md:col-span-2">
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Nome Completo</label>
+                    <input required type="text" className="w-full p-2 border rounded" value={newUser.name} onChange={e => setNewUser({ ...newUser, name: e.target.value })} placeholder="Ex: Ana Silva" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Username</label>
+                    <input required type="text" className="w-full p-2 border rounded" value={newUser.username} onChange={e => setNewUser({ ...newUser, username: e.target.value })} placeholder="ana.silva" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Senha</label>
+                    <input required type="password" className="w-full p-2 border rounded" value={newUser.password} onChange={e => setNewUser({ ...newUser, password: e.target.value })} placeholder="****" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">Cargo</label>
+                    <select className="w-full p-2 border rounded bg-white" value={newUser.role} onChange={e => setNewUser({ ...newUser, role: e.target.value })}>
+                      <option value="Editor">Editor</option>
+                      <option value="Admin">Admin</option>
+                    </select>
+                  </div>
+                  <div className="md:col-span-5 flex justify-end mt-2">
+                    <button type="submit" className="bg-sky-600 text-white px-4 py-2 rounded hover:bg-sky-700 transition-colors font-medium text-sm">Criar Utilizador</button>
+                  </div>
+                </form>
+              </Card>
+
+              <Card className="overflow-hidden">
+                <table className="w-full text-left border-collapse">
+                  <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+                    <tr>
+                      <th className="p-4">ID</th>
+                      <th className="p-4">Nome</th>
+                      <th className="p-4">Username</th>
+                      <th className="p-4">Cargo</th>
+                      <th className="p-4 text-right">Ações</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {Array.isArray(usersList) && usersList.map(u => (
+                      <tr key={u.id} className="hover:bg-slate-50">
+                        <td className="p-4 text-slate-400 font-mono text-xs">#{u.id}</td>
+                        <td className="p-4 font-medium text-slate-700">{u.name}</td>
+                        <td className="p-4 text-slate-500">@{u.username}</td>
+                        <td className="p-4"><span className={`px-2 py-1 rounded text-xs font-bold ${u.role === 'Admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>{u.role}</span></td>
+                        <td className="p-4 text-right">
+                          {u.id !== user.id && (
+                            <button onClick={() => handleDeleteUser(u.id)} className="text-red-400 hover:text-red-600 p-1 rounded hover:bg-red-50 transition-colors"><Trash2 size={16} /></button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Card>
+            </div>
           ) : (
             <Card className="overflow-hidden">
               <table className="w-full text-left border-collapse">
@@ -849,6 +1169,10 @@ export default function TaskManager() {
           )}
         </div>
 
+        <footer className="bg-white border-t border-slate-200 py-2 text-center text-[10px] text-slate-400 flex-shrink-0">
+          Desenvolvido por: Ender Guevara Narea - Todos os direitos reservados © V 1.1
+        </footer>
+
         {/* PANEL DETALLES (CON EDICIÓN Y CLICK FUERA) */}
         {selectedTask && (
           <div className="absolute inset-0 bg-black/20 backdrop-blur-sm z-30 flex justify-end" onClick={() => setSelectedTask(null)}>
@@ -871,7 +1195,9 @@ export default function TaskManager() {
                   {isEditing ? (
                     <>
                       <button onClick={saveEditing} className="p-2 bg-green-100 hover:bg-green-200 text-green-700 rounded-full transition-colors" title="Guardar"><Save size={20} /></button>
-                      <button onClick={handleDeleteTask} className="p-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-full transition-colors" title="Eliminar"><Trash2 size={20} /></button>
+                      {(user?.role === 'Admin' || selectedTask.solicitadoPor === user?.name) && (
+                        <button onClick={handleDeleteTask} className="p-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-full transition-colors" title="Eliminar"><Trash2 size={20} /></button>
+                      )}
                       <button onClick={cancelEditing} className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-full transition-colors" title="Cancelar"><X size={20} /></button>
                     </>
                   ) : (
@@ -961,7 +1287,9 @@ export default function TaskManager() {
                                 />
                                 <div className="flex justify-end gap-2">
                                   <button onClick={() => saveComment(realIndex)} className="p-1.5 bg-green-100 text-green-700 rounded hover:bg-green-200" title="Guardar"><Save size={14} /></button>
-                                  <button onClick={() => deleteComment(realIndex)} className="p-1.5 bg-red-100 text-red-700 rounded hover:bg-red-200" title="Apagar"><Trash2 size={14} /></button>
+                                  {(user?.role === 'Admin' || selectedTask.comentariosHistorial[realIndex].author === user?.name) && (
+                                    <button onClick={() => deleteComment(realIndex)} className="p-1.5 bg-red-100 text-red-700 rounded hover:bg-red-200" title="Apagar"><Trash2 size={14} /></button>
+                                  )}
                                   <button onClick={cancelEditingComment} className="p-1.5 bg-slate-100 text-slate-600 rounded hover:bg-slate-200" title="Cancelar"><X size={14} /></button>
                                 </div>
                               </div>
@@ -1004,6 +1332,6 @@ export default function TaskManager() {
           </div>
         )}
       </main>
-    </div>
+    </div >
   );
 }
