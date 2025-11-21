@@ -66,13 +66,13 @@ const Badge = ({ type, value }) => {
 };
 
 
-const NotificationToast = ({ message, onClose }) => (
+const NotificationToast = ({ title, message, onClose }) => (
   <div className="fixed top-4 right-4 bg-white border-l-4 border-sky-500 shadow-2xl rounded-r px-6 py-4 z-50 animate-[slideIn_0.3s_ease-out] flex items-center gap-4 max-w-md">
     <div className="bg-sky-100 p-2 rounded-full text-sky-600">
       <AlertCircle size={24} />
     </div>
     <div className="flex-1">
-      <p className="font-bold text-slate-800 text-sm uppercase tracking-wide">Novo Pendente!</p>
+      <p className="font-bold text-slate-800 text-sm uppercase tracking-wide">{title || "Novo Pendente!"}</p>
       <p className="text-slate-600 text-sm mt-1">{message}</p>
     </div>
     <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors p-1 hover:bg-slate-100 rounded">
@@ -147,12 +147,43 @@ export default function TaskManager() {
     }
   }, [tasks, isOffline]);
 
-  const playNotification = () => {
+  const playSound = (type) => {
     try {
-      // Un sonido de "ding" agradable
-      const audio = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3");
-      audio.volume = 0.5;
-      audio.play().catch(e => console.warn("No se pudo reproducir audio (posiblemente bloqueado por navegador):", e));
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext) return;
+
+      const ctx = new AudioContext();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      const now = ctx.currentTime;
+
+      if (type === 'new') {
+        // Ding grave para nuevo ticket (aprox 300Hz)
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(300, now);
+        osc.frequency.exponentialRampToValueAtTime(0.01, now + 1);
+
+        gain.gain.setValueAtTime(0.5, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 1);
+
+        osc.start(now);
+        osc.stop(now + 1);
+      } else {
+        // Ding MÁS grave para seguimiento (aprox 150Hz)
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(150, now);
+        osc.frequency.exponentialRampToValueAtTime(0.01, now + 1);
+
+        gain.gain.setValueAtTime(0.5, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 1);
+
+        osc.start(now);
+        osc.stop(now + 1);
+      }
     } catch (error) {
       console.error("Error audio:", error);
     }
@@ -167,24 +198,44 @@ export default function TaskManager() {
       if (jsonData.data) {
         setTasks(prev => {
           // Detección de nuevos tickets
+          // Detección de nuevos tickets y actualizaciones
           if (!isFirstLoad.current) {
-            const currentIds = new Set(prev.map(t => t.id));
-            const newItems = jsonData.data.filter(t => !currentIds.has(t.id));
+            const currentMap = new Map(prev.map(t => [t.id, t]));
+            const newItems = [];
+            const updatedItems = [];
+
+            jsonData.data.forEach(task => {
+              const oldTask = currentMap.get(task.id);
+              if (!oldTask) {
+                newItems.push(task);
+              } else {
+                // Detectar nuevos comentarios (seguimiento)
+                if (task.comentariosHistorial && oldTask.comentariosHistorial &&
+                  task.comentariosHistorial.length > oldTask.comentariosHistorial.length) {
+                  // Verificar que el último comentario NO sea del propio usuario actual (opcional, pero difícil sin auth real)
+                  // Por ahora notificamos todo cambio
+                  updatedItems.push(task);
+                }
+              }
+            });
 
             if (newItems.length > 0) {
               const newest = newItems[0];
-              // Evitar notificar si yo mismo lo acabo de crear (ya estaría en prev si lo añadí optimísticamente, 
-              // pero si el backend tardó y el polling llegó antes... es sutil. 
-              // Asumimos que si está en newItems no estaba en prev.)
-
-              // Solo notificar si no estaba ya en la lista local (prev)
               setNotification({
+                title: "Novo Pendente!",
                 message: `${newest.ref} - ${newest.titulo}`,
                 id: Date.now()
               });
-              playNotification();
-
-              // Auto-cerrar a los 5s
+              playSound('new');
+              setTimeout(() => setNotification(null), 5000);
+            } else if (updatedItems.length > 0) {
+              const lastUpdate = updatedItems[0];
+              setNotification({
+                title: "Nova Atualização!",
+                message: `${lastUpdate.ref} - ${lastUpdate.titulo}`,
+                id: Date.now()
+              });
+              playSound('update');
               setTimeout(() => setNotification(null), 5000);
             }
           }
@@ -549,6 +600,7 @@ export default function TaskManager() {
     <div className="flex h-screen bg-slate-50 font-sans overflow-hidden">
       {notification && (
         <NotificationToast
+          title={notification.title}
           message={notification.message}
           onClose={() => setNotification(null)}
         />
